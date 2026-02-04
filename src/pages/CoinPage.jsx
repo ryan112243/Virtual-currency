@@ -2,13 +2,17 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import api from '../utils/api'
 import {
-  LineChart,
+  ComposedChart,
   Line,
+  Area,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ResponsiveContainer,
+  Brush,
 } from 'recharts'
 
 function CoinPage({ currency, formatCurrency }) {
@@ -18,6 +22,15 @@ function CoinPage({ currency, formatCurrency }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [days, setDays] = useState(7)
+
+  const timeRanges = [
+    { label: '24小時', value: 1 },
+    { label: '7天', value: 7 },
+    { label: '30天', value: 30 },
+    { label: '90天', value: 90 },
+    { label: '1年', value: 365 },
+    { label: '最大', value: 'max' },
+  ]
 
   useEffect(() => {
     const fetchCoinData = async () => {
@@ -51,10 +64,16 @@ function CoinPage({ currency, formatCurrency }) {
           }
         )
         
-        const formattedChartData = chartResponse.data.prices.map((price) => ({
+        // 整合價格與交易量數據
+        const prices = chartResponse.data.prices
+        const volumes = chartResponse.data.total_volumes
+        
+        const formattedChartData = prices.map((price, index) => ({
           date: price[0],
           price: price[1],
+          volume: volumes[index] ? volumes[index][1] : 0,
         }))
+
         setChartData(formattedChartData)
 
         setError(null)
@@ -65,7 +84,7 @@ function CoinPage({ currency, formatCurrency }) {
         } else if (err.response && err.response.status === 503) {
           setError('CoinGecko 服務目前不可用，請稍後再試。')
         } else {
-          setError('無法取得貨幣詳情，請稍後再試。')
+          setError('無法載入數據，請檢查網路連線。')
         }
       } finally {
         setLoading(false)
@@ -117,58 +136,102 @@ function CoinPage({ currency, formatCurrency }) {
       {/* 價格走勢圖 */}
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-xl font-bold text-gray-800">價格走勢 ({days} 天)</h3>
-          <div className="flex gap-2">
-            {[1, 7, 30, 365].map((d) => (
+          <h3 className="text-xl font-bold text-gray-800">
+            市場走勢
+          </h3>
+          <div className="flex space-x-2">
+            {timeRanges.map((range) => (
               <button
-                key={d}
-                onClick={() => setDays(d)}
-                className={`px-3 py-1 rounded text-sm ${
-                  days === d 
-                    ? 'bg-blue-500 text-white font-bold' 
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                key={range.value}
+                onClick={() => setDays(range.value)}
+                className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                  days === range.value
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                 }`}
               >
-                {d === 1 ? '24h' : d === 365 ? '1y' : `${d}d`}
+                {range.label}
               </button>
             ))}
           </div>
         </div>
-        <div className="h-[300px] w-full bg-gray-50 rounded-lg p-4">
+        
+        <div className="h-[500px] w-full bg-white rounded-lg p-4 shadow-sm border border-gray-100">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <ComposedChart data={chartData}>
+              <defs>
+                <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
               <XAxis 
                 dataKey="date" 
                 tickFormatter={(time) => {
                   const date = new Date(time);
                   return days === 1 
-                    ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    ? date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
                     : date.toLocaleDateString();
                 }}
                 minTickGap={30}
+                tick={{fontSize: 12}}
               />
               <YAxis 
+                yAxisId="left"
+                orientation="right"
                 domain={['auto', 'auto']}
                 tickFormatter={(value) => 
-                  new Intl.NumberFormat('en-US', { 
-                    notation: "compact", 
-                    compactDisplay: "short" 
-                  }).format(value)
+                  new Intl.NumberFormat('en-US', { notation: "compact" }).format(value)
                 }
+                tick={{fontSize: 12}}
+              />
+              <YAxis 
+                yAxisId="right"
+                orientation="left"
+                tickFormatter={(value) => 
+                  new Intl.NumberFormat('en-US', { notation: "compact" }).format(value)
+                }
+                tick={{fontSize: 12}}
+                hide={true} // 隱藏交易量座標軸以保持整潔
               />
               <Tooltip 
+                contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
                 labelFormatter={(label) => new Date(label).toLocaleString()}
-                formatter={(value) => [formatCurrency(value), '價格']}
+                formatter={(value, name) => [
+                  name === 'volume' 
+                    ? formatCurrency(value).replace('$', '') 
+                    : formatCurrency(value),
+                  name === 'volume' ? '交易量' : '價格'
+                ]}
               />
-              <Line 
+              <Legend />
+              <Area 
+                yAxisId="left"
                 type="monotone" 
                 dataKey="price" 
                 stroke="#3b82f6" 
-                strokeWidth={2} 
-                dot={false} 
+                strokeWidth={2}
+                fillOpacity={1} 
+                fill="url(#colorPrice)" 
+                name="價格"
               />
-            </LineChart>
+              <Bar 
+                yAxisId="right"
+                dataKey="volume" 
+                barSize={20} 
+                fill="#cbd5e1" 
+                opacity={0.5}
+                name="交易量"
+              />
+              <Brush 
+                dataKey="date" 
+                height={30} 
+                stroke="#8884d8"
+                tickFormatter={() => ''}
+                alwaysShowText={false}
+              />
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       </div>

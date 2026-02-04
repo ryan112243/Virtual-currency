@@ -5,11 +5,27 @@ import CoinPage from './pages/CoinPage'
 
 function App() {
   const [currency, setCurrency] = useState('usd') // 'usd' or 'twd'
+  const [watchlist, setWatchlist] = useState(() => {
+    const saved = localStorage.getItem('watchlist')
+    return saved ? JSON.parse(saved) : []
+  })
+  const [refreshInterval, setRefreshInterval] = useState(60000) // Default 60s
+
+  const toggleWatchlist = (coinId) => {
+    setWatchlist(prev => {
+      const newWatchlist = prev.includes(coinId)
+        ? prev.filter(id => id !== coinId)
+        : [...prev, coinId]
+      localStorage.setItem('watchlist', JSON.stringify(newWatchlist))
+      return newWatchlist
+    })
+  }
 
   const formatCurrency = (value) => {
-    return new Intl.NumberFormat(currency === 'twd' ? 'zh-TW' : 'en-US', {
+    const curr = currency || 'usd'
+    return new Intl.NumberFormat(curr === 'twd' ? 'zh-TW' : 'en-US', {
       style: 'currency',
-      currency: currency.toUpperCase(),
+      currency: curr.toUpperCase(),
       minimumFractionDigits: 0,
       maximumFractionDigits: 2,
     }).format(value)
@@ -50,8 +66,31 @@ function App() {
         </div>
 
         <Routes>
-          <Route path="/" element={<Home currency={currency} formatCurrency={formatCurrency} />} />
-          <Route path="/coin/:id" element={<CoinPage currency={currency} formatCurrency={formatCurrency} />} />
+          <Route 
+            path="/" 
+            element={
+              <Home 
+                currency={currency || 'usd'} 
+                formatCurrency={formatCurrency}
+                watchlist={watchlist}
+                toggleWatchlist={toggleWatchlist}
+                refreshInterval={refreshInterval}
+                setRefreshInterval={setRefreshInterval}
+              />
+            } 
+          />
+          <Route 
+            path="/coin/:id" 
+            element={
+              <CoinPage 
+                currency={currency || 'usd'} 
+                formatCurrency={formatCurrency}
+                watchlist={watchlist}
+                toggleWatchlist={toggleWatchlist}
+                refreshInterval={refreshInterval}
+              />
+            } 
+          />
         </Routes>
       </div>
     </div>

@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
-import api from '../utils/api'
+import { fetchTopCoins, fetchExchangeRate } from '../utils/api'
 import { Link } from 'react-router-dom'
+import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts'
 
-function Home({ currency, formatCurrency }) {
+function Home({ currency, formatCurrency, watchlist, toggleWatchlist, refreshInterval, setRefreshInterval }) {
   const [coins, setCoins] = useState([])
   const [search, setSearch] = useState('')
+  const [showWatchlistOnly, setShowWatchlistOnly] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [lastUpdated, setLastUpdated] = useState(null)
@@ -14,60 +16,101 @@ function Home({ currency, formatCurrency }) {
       fetchCoins()
     }, 500) // Debounce
 
-    const interval = setInterval(fetchCoins, 60000) // 60 seconds
+    let interval = null
+    if (refreshInterval > 0) {
+      interval = setInterval(fetchCoins, refreshInterval)
+    }
+
     return () => {
       clearTimeout(timer)
-      clearInterval(interval)
+      if (interval) clearInterval(interval)
     }
-  }, [currency])
+  }, [currency, refreshInterval, showWatchlistOnly])
 
   const fetchCoins = async () => {
     try {
+      if (!currency) return 
       setLoading(true)
-      // 使用 api 實例，會自動根據環境加上 baseURL (Dev: /api, Prod: https://api.coingecko.com/api/v3)
-      // 因此這裡只需要寫 endpoint: '/coins/markets'
-      const response = await api.get(
-        '/coins/markets',
-        {
-          params: {
-            vs_currency: currency,
-            order: 'market_cap_desc',
-            per_page: 50,
-            page: 1,
-            sparkline: false,
-          },
+      
+      // Fetch data from CoinGecko
+      const limit = showWatchlistOnly && watchlist.length > 0 ? 100 : 50
+      const coinData = await fetchTopCoins(limit)
+      
+      let rate = 1
+      if (currency === 'twd') {
+        rate = await fetchExchangeRate()
+      }
+
+      // Map CoinGecko data to app structure
+      let mappedCoins = coinData.map((coin, index) => {
+        return {
+          id: coin.id,
+          name: coin.name,
+          symbol: coin.symbol,
+          current_price: coin.current_price * rate,
+          market_cap: coin.market_cap * rate,
+          market_cap_rank: coin.market_cap_rank,
+          price_change_percentage_24h: coin.price_change_percentage_24h,
+          image: coin.image,
         }
-      )
-      setCoins(response.data)
+      })
+
+      // Filter for watchlist if needed
+      if (showWatchlistOnly && watchlist.length > 0) {
+        mappedCoins = mappedCoins.filter(c => watchlist.includes(c.id))
+      }
+
+      setCoins(mappedCoins)
       setLastUpdated(new Date())
       setError(null)
     } catch (err) {
       console.error(err)
-      if (err.message === 'Network Error') {
-        setError('網路連線錯誤 (Network Error)。請檢查您的網路連線，或暫時關閉廣告阻擋器 (AdBlock)。')
-      } else if (err.response && err.response.status === 429) {
-        setError('請求過於頻繁 (Rate Limit Exceeded)。請稍等幾分鐘後再試。')
-      } else if (err.response && err.response.status === 503) {
-        setError('CoinGecko 服務目前不可用 (Service Unavailable)，請稍後再試。')
-      } else {
-        setError('無法取得資料，請稍後再試。')
-      }
+      setError(`無法取得資料，請稍後再試。(${err.message || '未知錯誤'})`)
     } finally {
       setLoading(false)
     }
   }
 
   const filteredCoins = coins.filter(coin =>
-    coin.name.toLowerCase().includes(search.toLowerCase()) ||
-    coin.symbol.toLowerCase().includes(search.toLowerCase())
+    (coin.name.toLowerCase().includes(search.toLowerCase()) ||
+    coin.symbol.toLowerCase().includes(search.toLowerCase())) &&
+    (!showWatchlistOnly || watchlist.includes(coin.id))
   )
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4 text-sm text-gray-500">
-        <div>
-          自動更新: 每 60 秒
+      <div className="flex flex-col md:flex-row justify-between items-center mb-4 text-sm text-gray-500 gap-4">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-gray-700 font-medium">自動更新:</span>
+            <select
+              value={refreshInterval}
+              onChange={(e) => setRefreshInterval(Number(e.target.value))}
+              className="border rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value={30000}>每 30 秒</option>
+              <option value={60000}>每 60 秒 (預設)</option>
+              <option value={0}>關閉</option>
+            </select>
+            {refreshInterval === 30000 && !showWatchlistOnly && (
+              <span className="text-xs text-orange-500 ml-2">
+                ⚠️ 頻繁更新可能觸發 API 限制
+              </span>
+            )}
+          </div>
+          
+          <button
+            onClick={() => setShowWatchlistOnly(!showWatchlistOnly)}
+            className={`px-3 py-1 rounded-full text-sm font-medium transition ${
+              showWatchlistOnly 
+                ? 'bg-yellow-100 text-yellow-800 ring-2 ring-yellow-400' 
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {showWatchlistOnly ? '★ 只顯示自選' : '☆ 顯示所有'}
+          </button>
         </div>
+
         <div className="flex items-center gap-2">
           最後更新: {lastUpdated ? lastUpdated.toLocaleTimeString() : '-'}
           <button
@@ -105,9 +148,10 @@ function Home({ currency, formatCurrency }) {
           <table className="min-w-full">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10"></th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">排名</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">貨幣</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">價格 ({currency.toUpperCase()})</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">價格 ({currency?.toUpperCase() || 'USD'})</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">24h 漲跌</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">市值</th>
               </tr>
@@ -115,6 +159,21 @@ function Home({ currency, formatCurrency }) {
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredCoins.map((coin) => (
                 <tr key={coin.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-center">
+                    <button 
+                      onClick={(e) => {
+                        e.preventDefault()
+                        toggleWatchlist(coin.id)
+                      }}
+                      className="text-2xl focus:outline-none transition transform active:scale-125"
+                    >
+                      {watchlist.includes(coin.id) ? (
+                        <span className="text-yellow-400">★</span>
+                      ) : (
+                        <span className="text-gray-300 hover:text-gray-400">☆</span>
+                      )}
+                    </button>
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-gray-500">
                     #{coin.market_cap_rank}
                   </td>
@@ -122,8 +181,8 @@ function Home({ currency, formatCurrency }) {
                     <Link to={`/coin/${coin.id}`} className="flex items-center group">
                       <img className="h-8 w-8 rounded-full mr-3" src={coin.image} alt={coin.name} />
                       <div>
-                        <div className="font-bold text-gray-900 group-hover:text-blue-600 transition">{coin.name}</div>
-                        <div className="text-sm text-gray-500 uppercase">{coin.symbol}</div>
+                        <div className="font-bold text-gray-900 group-hover:text-blue-600 transition">{coin?.name || 'Unknown'}</div>
+                        <div className="text-sm text-gray-500 uppercase">{coin?.symbol || ''}</div>
                       </div>
                     </Link>
                   </td>
